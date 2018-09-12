@@ -74,6 +74,7 @@ data MemoryMapFlag =
       MemoryMapShared  -- ^ memory changes are shared between process
     | MemoryMapPrivate -- ^ memory changes are private to process
     | MemoryMapHugeTlb -- ^ memory is allocated in huge pages
+    | MemoryMapAnonymous -- ^ memory allocated is not backed by a file
     deriving (Show,Read,Eq)
 
 -- | Memory protection
@@ -125,29 +126,28 @@ cvalueOfMemorySync = foldl (.|.) 0 . map toSync
 memoryMap :: Maybe (Ptr a)      -- ^ The address to map to if MapFixed is used.
           -> CSize              -- ^ The length of the mapping
           -> [MemoryProtection] -- ^ the memory protection associated with the mapping
-          -> MemoryMapFlag      -- ^ 
+          -> [MemoryMapFlag]      -- ^ 
           -> Maybe Fd
           -> COff
           -> IO (Ptr a)
-memoryMap initPtr sz prots flag mfd off =
+memoryMap initPtr sz prots flags mfd off =
     throwErrnoIf (== m1ptr) "mmap" (c_mmap (maybe nullPtr id initPtr) sz cprot cflags fd off)
   where m1ptr  = nullPtr `plusPtr` (-1)
         fd     = maybe (-1) (\(Fd v) -> v) mfd
         cprot  = cvalueOfMemoryProts prots
-        cflags = maybe cMapAnon (const 0) mfd
-             .|. maybe 0 (const cMapFixed) initPtr
-             .|. toMapFlag flag
+        cflags = maybe 0 (const cMapFixed) initPtr
+             .|. foldr ((.|.) . toMapFlag) 0 flags
 
-#ifdef __APPLE__
-        cMapAnon  = (#const MAP_ANON)
-#else
-        cMapAnon  = (#const MAP_ANONYMOUS)
-#endif
         cMapFixed = (#const MAP_FIXED)
 
         toMapFlag MemoryMapShared  = (#const MAP_SHARED)
         toMapFlag MemoryMapPrivate = (#const MAP_PRIVATE)
         toMapFlag MemoryMapHugeTlb = (#const MAP_HUGETLB)
+#ifdef __APPLE__
+        toMapFlag MemoryMapAnonymous = (#const MAP_ANON)
+#else
+        toMapFlag MemoryMapAnonymous = (#const MAP_ANONYMOUS)
+#endif
 
 memoryUnmap :: Ptr a -> CSize -> IO ()
 memoryUnmap ptr sz = throwErrnoIfMinus1_ "munmap" (c_munmap ptr sz)
